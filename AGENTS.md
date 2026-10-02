@@ -27,6 +27,7 @@ After `package.json` is introduced, use the documented npm workflow:
 - `npx prisma migrate deploy` applies committed migrations only from a protected production/CI step.
 - `npm run bootstrap:registry` explicitly synchronizes the reviewed anchor/corridor registries for a new database.
 - `npm run stamp:environment` stamps a database with its explicit environment identity (operator tooling; run from the protected migration workflow, never from application runtime).
+- `npm run migration:gate` runs the fail-closed backup gate before production migrations: it classifies pending migrations against the deterministic risk scale in `constants/migrationBackupGate.ts`, requires recent verified backup evidence (`backup-evidence/<environment>.json`) for high-risk migrations, and honors the fully explicit emergency override only. `npm run migration:gate -- --classify-only` is an offline dry-run that classifies the committed chain without a database.
 - `npm run release:manifest` generates the release SBOM (CycloneDX) and build provenance into `dist-release/`.
 - `npm run verify:release` verifies release artifacts against the current checkout and fails closed on digest drift or secret leakage.
 - Property/fuzz suites for untrusted SEP parsing live in `tests/property/`; run them with `npx tsx --test tests/property/sep1Property.test.ts tests/property/sep38Property.test.ts tests/property/regressionCorpus.test.ts` and reproduce failures with the printed `SEED`.

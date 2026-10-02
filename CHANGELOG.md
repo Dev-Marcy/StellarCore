@@ -11,6 +11,7 @@ with your pull request.
 
 ### Added
 
+- Fail-closed backup gate for production migrations: deterministic high-risk classification of pending migrations, non-secret backup/restore-drill evidence verification with freshness and target binding, an explicit audited emergency override that is never the default, and tests for valid, stale, missing, and mismatched evidence (#188).
 - Public API rate limiting, current API reference, reputation methodology documentation, and reputation property tests (#22, #24, #25, #26).
 - Anchor detail UI, median property tests, transfer-outcome webhook schema RFC, and SEP-38 USDC→BRL source research (#5, #7, #18, #21).
 - Public API reference and reputation methodology docs, verified public-route rate limiting, and reputation property coverage recovered from PR #83 (#22, #24, #25, #26).

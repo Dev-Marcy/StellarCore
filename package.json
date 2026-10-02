@@ -28,6 +28,7 @@
     "benchmark:latest-observations": "tsx scripts/benchmark-latest-observations.ts",
     "bootstrap:registry": "tsx scripts/bootstrap-registry.ts",
     "stamp:environment": "tsx scripts/stamp-database-environment.ts",
+    "migration:gate": "node --import tsx scripts/migration-backup-gate.ts",
     "suppression:reactivate": "tsx scripts/reactivate-scheduled-source.ts",
     "release:manifest": "tsx scripts/release-cli.ts generate",
     "verify:release": "tsx scripts/release-cli.ts verify",

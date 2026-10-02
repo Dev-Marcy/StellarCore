@@ -439,6 +439,10 @@ npm run registry:print
 # Type check only
 npx tsc --noEmit
 
+# Offline dry-run of the migration backup gate (classifies the committed
+# migration chain; no database, no secrets)
+npm run migration:gate -- --classify-only
+
 # Opt-in live SEP-10 verification against the official Stellar test anchor
 npm run verify:sep10
 
@@ -453,6 +457,14 @@ BENCHMARK_DATABASE_URL=postgresql://... npm run benchmark:latest-observations
 `snapshot:rates` is an opt-in network-backed check; it discovers only reviewed
 registry sources, verifies their advertised SEP-38 pair, and appends individual
 rate snapshots. It is not run by tests, builds, postinstall, or dev startup.
+
+`migration:gate` runs the fail-closed backup gate that protects production
+migrations (#188): pending migrations are classified against a deterministic
+risk scale, and any high-risk migration is blocked unless
+`backup-evidence/<environment>.json` proves a recent, successful restore drill
+bound to the intended database. The `--classify-only` flag is an offline
+dry-run; the full gate runs in the protected **Deploy production migrations**
+workflow. See [docs/migration-backup-gate.md](docs/migration-backup-gate.md).
 
 `audit:config` performs a pure, deterministic check of the checked-in anchor,
 corridor, membership, and reviewed rate-source relationships. It requires no
@@ -534,7 +546,7 @@ StellarCore targets Vercel Node.js functions with managed PostgreSQL and Prisma 
 
 - Use Node.js 22.x and `npm run build`; existing `postinstall` generates Prisma Client.
 - Set server-only `DATABASE_URL` and `CRON_SECRET`; `DIRECT_URL` is not used.
-- Apply tracked migrations only through the manual **Deploy production migrations** GitHub Actions workflow (`.github/workflows/deploy-production-migrations.yml`, `workflow_dispatch` only), which runs `npx prisma migrate deploy` — never ordinary Vercel builds or previews. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- Apply tracked migrations only through the manual **Deploy production migrations** GitHub Actions workflow (`.github/workflows/deploy-production-migrations.yml`, `workflow_dispatch` only), which runs the backup gate first and then `npx prisma migrate deploy` — never ordinary Vercel builds or previews. The gate fails closed when a high-risk migration lacks recent, verified, correctly bound backup evidence; the override inputs default to off and print an audit banner when deliberately used. See [docs/migration-backup-gate.md](docs/migration-backup-gate.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - Synchronize the reviewed registry through the manual **Bootstrap production registry** GitHub Actions workflow (`.github/workflows/bootstrap-production-registry.yml`, `workflow_dispatch` only), which runs `npm run bootstrap:registry` once after migration and before the first refresh; it is idempotent and may be re-run after a reviewed registry change. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - The Hobby-compatible Vercel Cron calls the authenticated refresh route daily at `0 0 * * *`.
 - Keep production database and cron secrets out of preview deployments until isolated preview infrastructure exists.

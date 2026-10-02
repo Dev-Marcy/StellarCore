@@ -1,0 +1,55 @@
+# Verifies the migration backup gate (#188) on every pull request that
+# touches the gate, its evidence, or the migration chain.
+#
+# It runs the gate's unit suites (risk classification, evidence schema and
+# freshness/target evaluation, fail-closed decision logic, emergency
+# override) and an offline classification dry-run over the committed
+# migration chain. It never connects to a database and never needs secrets.
+
+name: Audit migration backup gate
+
+on:
+  pull_request:
+    paths:
+      - "lib/migrations/**"
+      - "constants/migrationBackupGate.ts"
+      - "scripts/migration-backup-gate.ts"
+      - "backup-evidence/**"
+      - "tests/unit/migrations/**"
+      - "docs/migration-backup-gate.md"
+      - "prisma/migrations/**"
+      - "package.json"
+      - ".github/workflows/audit-migration-backup-gate.yml"
+      - ".github/workflows/deploy-production-migrations.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: audit migration backup gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client
+        env:
+          DATABASE_URL: postgresql://stellarcore:stellarcore@localhost:5432/stellarcore
+        run: npx prisma generate
+
+      - name: Run backup gate unit tests
+        run: npm test -- tests/unit/migrations
+
+      - name: Classify committed migrations (offline dry-run)
+        run: npm run migration:gate -- --classify-only

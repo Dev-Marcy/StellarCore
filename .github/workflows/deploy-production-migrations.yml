@@ -2,10 +2,26 @@
 #
 # This workflow is intentionally manual and kept separate from Vercel builds
 # and preview deployments, so an ordinary build or a preview can never mutate
-# the production database. It runs only `npx prisma migrate deploy`, which
-# applies already-committed migrations; it never runs `prisma migrate dev`,
+# the production database. It runs the backup gate (issue #188) and then
+# exactly `npx prisma migrate deploy`, which applies already-committed
+# migrations; it never runs `prisma migrate dev`,
 # `prisma db push`, or any reset command, and it never creates or edits a
 # migration.
+#
+# Before applying anything, the workflow runs the backup gate
+# (`npm run migration:gate`, issue #188): pending migrations are classified
+# against the deterministic risk scale in constants/migrationBackupGate.ts,
+# and any high-risk migration is blocked unless backup-evidence/<env>.json
+# proves a recent, successful restore drill bound to this exact database.
+# Low-risk additive migrations pass without evidence. The gate fails closed
+# on missing, stale, unreadable, or wrong-target evidence.
+#
+# Emergency override: the three `backup_gate_override*` inputs below are all
+# empty/off by default, so the gate can never be bypassed implicitly. Setting
+# the token to `emergency` together with a reason and a review reference
+# (e.g. `#188`) is required for the override; when it is used the gate prints
+# a loud audit banner — with the reason, reference, and the exact check it
+# bypassed — into the deployment log.
 #
 # One-time setup a repository admin must complete before the first run
 # (see docs/DEPLOYMENT.md for the full procedure):
@@ -14,6 +30,8 @@
 #      PostgreSQL connection string suitable for Prisma Migrate.
 #   3. Optionally attach required reviewers / protection rules to the
 #      `production` environment.
+#   4. Commit recent backup evidence (`backup-evidence/production.json`,
+#      metadata only) before running a high-risk migration.
 #
 # The secret is read only from the GitHub `production` environment. Do not
 # place it in any repository file.
@@ -22,6 +40,22 @@ name: Deploy production migrations
 
 on:
   workflow_dispatch:
+    inputs:
+      backup_gate_override:
+        description: "Emergency backup-gate override. Leave `none` unless an approved emergency requires migrating without verified backup evidence."
+        type: choice
+        options:
+          - none
+          - emergency
+        default: none
+      backup_gate_override_reason:
+        description: "Why the migration must proceed without verified backup evidence (>= 12 characters)."
+        required: false
+        default: ""
+      backup_gate_override_review:
+        description: "Reviewed approval reference for the override, e.g. #188 or PR #314."
+        required: false
+        default: ""
 
 # Never run two production migrations at once, and never cancel a migration
 # that is already in progress just because another run was triggered.
@@ -61,6 +95,20 @@ jobs:
         run: npm ci
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      # Backup gate (#188): fail closed unless every pending high-risk
+      # migration is covered by recent, verified, correctly bound backup
+      # evidence — or by the fully explicit override inputs above. The gate
+      # only reads: classification is pure, evidence is a committed JSON
+      # file, and the database session is a constant-SQL SELECT.
+      - name: Verify migration backup gate
+        run: npm run migration:gate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STELLARCORE_ENVIRONMENT: production
+          STELLARCORE_BACKUP_GATE_OVERRIDE: ${{ inputs.backup_gate_override == 'emergency' && 'emergency-acknowledge-unverified-backup' || '' }}
+          STELLARCORE_BACKUP_GATE_OVERRIDE_REASON: ${{ inputs.backup_gate_override_reason }}
+          STELLARCORE_BACKUP_GATE_OVERRIDE_REVIEW: ${{ inputs.backup_gate_override_review }}
 
       - name: Apply migrations
         run: npx prisma migrate deploy

@@ -122,10 +122,11 @@ back to PostgreSQL reads.
 ## Migration strategy
 
 1. Configure the server-only runtime `DATABASE_URL` for the production deployment, and separately configure the protected GitHub Actions `production` environment's direct Prisma Postgres credential as its `DATABASE_URL` secret.
-2. From a protected CI/release step, run `npx prisma migrate deploy` once against that environment.
-3. Stamp the database identity with `npm run stamp:environment` (automated by the migration workflow's dedicated step, #143).
-4. Confirm `npx prisma migrate status` is current.
-5. Deploy the application with `npm run build`.
+2. Before anything applies, run the backup gate (`npm run migration:gate`, #188): pending migrations are classified against the deterministic risk scale, and any high-risk migration requires recent, verified, correctly bound backup evidence (`backup-evidence/production.json`) or the fully explicit emergency override — see [docs/migration-backup-gate.md](migration-backup-gate.md).
+3. From a protected CI/release step, run `npx prisma migrate deploy` once against that environment.
+4. Stamp the database identity with `npm run stamp:environment` (automated by the migration workflow's dedicated step, #143).
+5. Confirm `npx prisma migrate status` is current.
+6. Deploy the application with `npm run build`.
 
 Do not run `prisma migrate dev`, `prisma db push`, reset commands, or `migrate deploy` from ordinary Vercel builds. Keeping migrations outside the build prevents preview deployments from mutating a shared production database.
 
@@ -135,17 +136,36 @@ The protected step above is implemented as a manual GitHub Actions workflow:
 `.github/workflows/deploy-production-migrations.yml`. It is triggered only by
 `workflow_dispatch` and is intentionally separate from Vercel builds, so a
 preview or an ordinary build can never mutate the production database. It runs
-exactly `npx prisma migrate deploy` on `ubuntu-latest` with Node.js 22 after
+the **backup gate** (`npm run migration:gate`) and then exactly
+`npx prisma migrate deploy` on `ubuntu-latest` with Node.js 22 after
 `npm ci`, uses least-privilege `contents: read` permissions, a 10-minute job
 timeout, and a non-cancelling `production-database-migration` concurrency group
 so two migration runs can never overlap.
 
-The `production` environment's `DATABASE_URL` secret is supplied to both the
-dependency-installation step and the migration step. `npm ci` runs the
+The backup gate fails closed (#188): if any pending migration classifies as
+high-risk, the gate requires `backup-evidence/production.json` to prove a
+backup and restore drill from the last 7 days bound to this environment and
+database (`current_database()` plus the #143 environment stamp). Missing,
+stale, unreadable, or wrong-target evidence blocks the run before
+`prisma migrate deploy` starts. Low-risk additive migrations pass without
+evidence. The gate only reads — classification is pure, evidence is a
+committed JSON file, and its database session issues constant, parameter-free
+SELECTs. Full design: [docs/migration-backup-gate.md](migration-backup-gate.md).
+
+Emergency override: the workflow exposes three `backup_gate_override*`
+inputs that default to `none`/empty, so the gate can never be bypassed by
+default or by a partial setting. Overriding deliberately requires the exact
+token (`emergency` input), a reason of at least 12 characters, and a review
+reference such as `#188`; the gate then prints a loud audit banner — reason,
+reference, and the exact check bypassed — into the deployment log. See the
+[override procedure](migration-backup-gate.md#emergency-override).
+
+The `production` environment's `DATABASE_URL` secret is supplied to the
+dependency-installation, backup-gate, and migration steps. `npm ci` runs the
 `postinstall` script (`prisma generate`), which loads `prisma.config.ts`, and
 that configuration resolves `DATABASE_URL`; without the secret the install step
 fails with `PrismaConfigEnvError: Cannot resolve environment variable:
-DATABASE_URL` before any migration runs. The secret stays scoped to those two
+DATABASE_URL` before any migration runs. The secret stays scoped to those
 steps rather than the whole workflow, and is never printed.
 
 One-time setup (repository admin):
@@ -162,12 +182,19 @@ One-time setup (repository admin):
 
 Running a migration:
 
-6. Open the repository **Actions** tab.
-7. Select the **Deploy production migrations** workflow.
-8. Choose **Run workflow** on the intended branch and confirm.
-9. Confirm the **prisma migrate deploy** step succeeds (the run log shows the
-   applied migrations, or "No pending migrations to apply").
-10. Only then continue to the **Bootstrap production registry** workflow
+6. Make sure `backup-evidence/production.json` reflects a backup and restore
+   drill from the last 7 days (required only when a pending migration is
+   high-risk; see [backup-evidence/README.md](../backup-evidence/README.md)).
+7. Open the repository **Actions** tab.
+8. Select the **Deploy production migrations** workflow.
+9. Choose **Run workflow** on the intended branch, leave the backup-gate
+   override inputs at their defaults unless an approved emergency applies,
+   and confirm.
+10. Confirm the **Verify migration backup gate** step succeeds (its log
+    prints the per-migration risk scores and the decision).
+11. Confirm the **prisma migrate deploy** step succeeds (the run log shows
+    the applied migrations, or "No pending migrations to apply").
+12. Only then continue to the **Bootstrap production registry** workflow
     (see below) and the application deployment described below.
 
 The workflow never prints the secret and adds no environment-dumping debug
@@ -259,7 +286,9 @@ The locally verified run took about ten seconds. At the current reviewed scope o
 ## First production cycle
 
 1. Apply committed migrations with the **Deploy production migrations**
-   workflow (`.github/workflows/deploy-production-migrations.yml`).
+   workflow (`.github/workflows/deploy-production-migrations.yml`); the
+   backup gate runs first and fails closed without valid evidence when a
+   pending migration is high-risk (#188).
 2. Synchronize the reviewed registry with the **Bootstrap production registry**
    workflow (`.github/workflows/bootstrap-production-registry.yml`) and resolve
    any nonzero result.

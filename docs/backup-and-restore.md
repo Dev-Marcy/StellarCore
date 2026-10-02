@@ -53,6 +53,13 @@ Cadence: at minimum before every production migration
 much observed history you can afford to lose — the tables above cannot be
 re-captured.
 
+After each backup **and its verified restore**, record the non-secret outcome
+in `backup-evidence/<environment>.json` (timestamps, target identity, drill
+result — nothing else). The migration backup gate (#188) reads that record
+and refuses to run a high-risk production migration unless it is recent,
+passed, and bound to the intended database; see
+[docs/migration-backup-gate.md](migration-backup-gate.md).
+
 ## Restore
 
 **Always restore into a fresh database and verify it before touching
